@@ -1,0 +1,172 @@
+deleteall;
+clear;
+
+wz = 222e-9;
+wy = 360e-9;
+acav = 133e-9;
+amir = 140e-9;
+hx = 71e-9;
+hy = 183e-9;
+taper_len_list = [12];
+num_mir_list = [0;2;4;6;8;12;15;20];
+n_PhC = 3.22;
+n_sub = 2.4;
+size_yz = (ceil(wy/amir)+8)*amir;
+res = 10e-9;
+num_loop = length(num_mir_list);
+
+Qanalysis_lambda_min = 700e-9;
+Qanalysis_lambda_max = 800e-9;
+
+Qanalysis_f_min = (3e8)/Qanalysis_lambda_max;
+Qanalysis_f_max = (3e8)/Qanalysis_lambda_min;
+
+for (m=1:length(taper_len_list)) {
+    taper_len = taper_len_list(m);
+    for(k=1:num_loop) {
+        switchtolayout;   
+        deleteall;
+        num_mir = num_mir_list(k);
+        single_side_hole = (taper_len-1)/2;
+        aper_a = (amir-acav)/(single_side_hole*single_side_hole-0.25);
+        aper_c = (amir-4*acav*single_side_hole*single_side_hole)/(1-4*single_side_hole*single_side_hole);
+        idx = linspace(-1*single_side_hole,single_side_hole,taper_len);
+        
+        aper_list = matrix(num_mir*2+taper_len);    
+        acav_list = matrix(taper_len);
+        for(i=1:taper_len) {acav_list(i) = aper_a*idx(i)*idx(i)+aper_c;}
+        if(num_mir!=0){
+            amir_list = matrix(num_mir);
+            for(i=1:num_mir) {amir_list(i) = amir;}
+            aper_list(1:num_mir) = amir_list;
+            aper_list(num_mir+1:num_mir+taper_len) = acav_list;
+            aper_list(num_mir+taper_len+1:length(aper_list)) = amir_list;
+        }
+        else{
+            aper_list(1:taper_len) = acav_list;
+        }
+        
+        total_len = sum(aper_list);
+        beam_len = total_len+12*amir;
+        
+        addrect;
+        set("name","nanobeam");
+        set("x",0);
+        set("y",0);
+        set("z",wz/2);
+        set("x span",beam_len);
+        set("y span",wy);
+        set("z span",wz);
+        set("index",n_PhC);
+        set("override mesh order from material database",1);
+        set("mesh order",2); 
+        
+        hole_write_x = -1*total_len/2;
+        for(i=1:length(aper_list)) {
+          hole_write_x = hole_write_x+aper_list(i)/2;
+          addobject("oval_cyl");
+          set("name","hole");
+          set("x",hole_write_x);
+          set("y",0);
+          set("z",wz/2);
+          set("radius",hx/2);
+          set("radius 2",hy/2);
+          set("z span",wz);
+          set("index",1);
+          hole_write_x = hole_write_x+aper_list(i)/2;
+          set("override mesh order from material database",1);
+          set("mesh order",1); 
+        }
+        
+        addrect;
+        set("name","substrate");
+        set("x",0);
+        set("y",0);
+        set("z",-1*size_yz/4);
+        set("x span",beam_len);
+        set("y span",size_yz);
+        set("z span",size_yz/2);
+        set("index",n_sub);
+        set("override mesh order from material database",1);
+        set("mesh order",3); 
+        
+        addmesh;
+        set("x",0);
+        set("x span",beam_len);
+        set("y",0);
+        set("y span",size_yz);
+        set("z",0);
+        set("z span",size_yz);
+        set("set maximum mesh step",1);
+        set("override x mesh",1);
+        set("override y mesh",1);
+        set("override z mesh",1);
+        set("dx",res);
+        set("dy",res);
+        set("dz",res);
+        
+        addfdtd;
+        set("dimension",2);
+        set("x",0);
+        set("x span",beam_len-4*amir);
+        set("y",0);
+        set("y span",size_yz-2*amir);
+        set("z",0);
+        set("z span",size_yz-2*amir);
+        set("x min bc","Symmetric");
+        set("y min bc","Anti-Symmetric");
+        set("simulation time",1e-12);
+        set("use early shutoff",0);
+        
+        adddipole;
+        set("dipole type","Magnetic dipole");
+        set("x",10e-9);
+        set("y",20e-9);
+        set("z",wz/2+40e-9);
+        set("wavelength start",710e-9);
+        set("wavelength stop",790e-9);
+        
+        adddipole;
+        set("dipole type","Magnetic dipole");
+        set("x",20e-9);
+        set("y",30e-9);
+        set("z",wz/2-10e-9);
+        set("wavelength start",720e-9);
+        set("wavelength stop",760e-9);
+        
+        addobject("Qanalysis");
+        set("use relative coordinates",0);
+        set("x",20e-9);
+        set("y",20e-9);
+        set("z",wz/2);
+        set("nx",2);
+        set("ny",2);
+        set("nz",2);
+        set("x span",10e-9);
+        set("y span",10e-9);
+        set("z span",wz/3);
+        set("make plots",1);
+        set('f min',Qanalysis_f_min);
+        set('f max',Qanalysis_f_max);
+        set('t start',0.5e-12);
+        addanalysisresult("f0");
+        
+        run;
+        runanalysis;
+        
+        Qcal = getresult("Qanalysis", "Q");
+        maxQ = max(Qcal.Q);
+        ind_maxQ = find(Qcal.Q == maxQ);
+        lambda_maxQ = Qcal.lambda(ind_maxQ);
+        selectfigure(1);
+        exportfigure("FieldDecay_"+num2str(num_mir)+"_"+num2str(num_mir)+".jpg");
+        selectfigure(2);
+        exportfigure("DecaySlope_"+num2str(num_mir)+"_"+num2str(num_mir)+".jpg");
+        closeall;
+        
+        matlabsave("SiVminus_GaPonDia_wy360_wz222_NumTap"+num2str(taper_len)+"_SweepNumMirr0To20_"+num2str(k),taper_len,num_mir,lambda_maxQ,maxQ);
+        
+        closeall;
+        clear(Qcal,lambda_maxQ,maxQ);
+    }
+}
