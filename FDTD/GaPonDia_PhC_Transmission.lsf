@@ -1,0 +1,166 @@
+deleteall;
+clear;
+
+wz = 222e-9;
+wy = 360e-9;
+acav = 133e-9;
+amir = 140e-9;
+hx = 71e-9;
+hy = 183e-9;
+taper_len_list = [12];
+num_mir_list = [6];
+n_PhC = 3.22;
+n_sub = 2.4;
+size_yz = (ceil(wy/amir)+8)*amir;
+res = 10e-9;
+num_loop = length(num_mir_list);
+
+Transmission_lambda_min = 500e-9;
+Transmission_lambda_max = 900e-9;
+Transmission_num_pt = 400;
+
+setglobalsource("wavelength start", Transmission_lambda_min);
+setglobalsource("wavelength stop", Transmission_lambda_max);
+
+for (m=1:length(taper_len_list)) {
+    taper_len = taper_len_list(m);
+    for(k=1:num_loop) {
+        switchtolayout;   
+        deleteall;
+        num_mir = num_mir_list(k);
+        single_side_hole = (taper_len-1)/2;
+        aper_a = (amir-acav)/(single_side_hole*single_side_hole-0.25);
+        aper_c = (amir-4*acav*single_side_hole*single_side_hole)/(1-4*single_side_hole*single_side_hole);
+        idx = linspace(-1*single_side_hole,single_side_hole,taper_len);
+        
+        aper_list = matrix(num_mir*2+taper_len);    
+        acav_list = matrix(taper_len);
+        for(i=1:taper_len) {acav_list(i) = aper_a*idx(i)*idx(i)+aper_c;}
+        if(num_mir!=0){
+            amir_list = matrix(num_mir);
+            for(i=1:num_mir) {amir_list(i) = amir;}
+            aper_list(1:num_mir) = amir_list;
+            aper_list(num_mir+1:num_mir+taper_len) = acav_list;
+            aper_list(num_mir+taper_len+1:length(aper_list)) = amir_list;
+        }
+        else{
+            aper_list(1:taper_len) = acav_list;
+        }
+        
+        total_len = sum(aper_list);
+        beam_len = total_len+12*amir;
+        
+        addrect;
+        set("name","nanobeam");
+        set("x",0);
+        set("y",0);
+        set("z",wz/2);
+        set("x span",beam_len);
+        set("y span",wy);
+        set("z span",wz);
+        set("index",n_PhC);
+        set("override mesh order from material database",1);
+        set("mesh order",2); 
+        
+        hole_write_x = -1*total_len/2;
+        for(i=1:length(aper_list)) {
+          hole_write_x = hole_write_x+aper_list(i)/2;
+          addobject("oval_cyl");
+          set("name","hole");
+          set("x",hole_write_x);
+          set("y",0);
+          set("z",wz/2);
+          set("radius",hx/2);
+          set("radius 2",hy/2);
+          set("z span",wz);
+          set("index",1);
+          hole_write_x = hole_write_x+aper_list(i)/2;
+          set("override mesh order from material database",1);
+          set("mesh order",1); 
+        }
+        
+        addrect;
+        set("name","substrate");
+        set("x",0);
+        set("y",0);
+        set("z",-1*size_yz/4);
+        set("x span",beam_len);
+        set("y span",size_yz);
+        set("z span",size_yz/2);
+        set("index",n_sub);
+        set("override mesh order from material database",1);
+        set("mesh order",3);    
+                
+        addmesh;
+        set("x",0);
+        set("x span",beam_len);
+        set("y",0);
+        set("y span",size_yz);
+        set("z",0);
+        set("z span",size_yz);
+        set("set maximum mesh step",1);
+        set("override x mesh",1);
+        set("override y mesh",1);
+        set("override z mesh",1);
+        set("dx",res);
+        set("dy",res);
+        set("dz",res);
+        
+        addfdtd;
+        set("dimension",2);
+        set("x",0);
+        set("x span",beam_len-4*amir);
+        set("y",0);
+        set("y span",size_yz-2*amir);
+        set("z",0);
+        set("z span",size_yz-2*amir);
+        set("x min bc","PML");
+        set("x max bc","PML");
+        set("y min bc","Anti-Symmetric");
+        set("y max bc","PML");
+        set("z min bc","PML");
+        set("z max bc","PML");
+        set("simulation time",2e-12);
+        set("use early shutoff",0);  
+        
+        addport;
+        set("name","input");
+        set("injection axis",1);
+        set("mode selection",2);
+        set("frequency points",20);
+        set("x",-2*amir-total_len/2);
+        set("y",0);
+        set("y",0);
+        set("y span",size_yz-2*amir);
+        set("z",0);
+        set("z span",size_yz-2*amir);
+        
+        addport;
+        set("name","transmission");
+        set("injection axis",1);
+        set("mode selection",2);
+        set("frequency points",20);
+        set("x",2*amir+total_len/2);
+        set("y",0);
+        set("y span",size_yz-2*amir);
+        set("z",0);
+        set("z span",size_yz-2*amir);
+        
+        groupscope("::model::FDTD::ports");
+        set("source port", "input");
+        set("monitor frequency points",Transmission_num_pt);
+        groupscope("::model");
+        
+        run;
+        Sparam = getresult("::model::FDTD::ports::transmission","S");
+        Tparam = getresult("::model::FDTD::ports::transmission","T");
+        MEM = getresult("::model::FDTD::ports::transmission","expansion for port monitor");
+        Tnet = MEM.T_net;
+        Ttotal = MEM.T_total;
+        Tinput = MEM.T_in;
+        Toutput = MEM.T_out;
+
+        matlabsave("SiVminus_GaPonDia_wy360_wz222_NumTap12_NumMirr6_transmission_"+num2str(k),taper_len,num_mir,Sparam,Tparam,MEM,Tnet,Ttotal,Tinput,Toutput);
+    }
+}
+
